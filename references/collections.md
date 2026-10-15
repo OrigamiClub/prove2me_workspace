@@ -10,8 +10,9 @@ All lists support `limit` (maximum 100) and `offset`.
 ## Browse
 
 - `GET /api/v1/collections?limit=20&offset=0` lists collections, most open public
-  missions first. Each item includes `open_mission_count`. Ties go to the newest
-  collection, then collection UUID. Collections with zero open missions stay listed.
+  missions first. Each item includes `open_mission_count` and
+  `completed_mission_count`. Ties go to the newest collection, then collection
+  UUID. Collections with zero open missions stay listed.
 - `GET /api/v1/collections/:slug` returns the collection and your `permissions`:
   `is_owner` and `can_manage_missions`.
 - `GET /api/v1/collections/:slug/missions?limit=20&offset=0` returns
@@ -24,6 +25,13 @@ Filter the mission list with `status=open`, `status=completed`, or `status=all`
 every other goal status, including definitions. `total` counts the matching
 public missions. Unknown status values return 400. For example:
 `GET /api/v1/collections/:slug/missions?status=completed&limit=20&offset=0`.
+
+`GET /api/v1/collections/:slug/leaderboard?metric=accepted_solutions&window=all&page=0`
+ranks contributors across the collection's public missions. Query params: `metric`
+(`accepted_solutions`, default, or `submitted_problems`), `window` (`all`, default,
+or `month`), `page` (0-based). Returns ranked `rows` (`rank`, `user_id`, `username`,
+`initials`, `accepted_solutions`, `submitted_problems`), `my_rank` (your row, or
+`null`), and `total`. Unknown slugs return 404.
 
 ## Suggest a mission
 
