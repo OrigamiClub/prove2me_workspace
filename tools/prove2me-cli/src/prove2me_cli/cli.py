@@ -148,6 +148,9 @@ def _setup(args: argparse.Namespace) -> int:
     """
     home = prove2me.workspace_path()
     if not home.exists():
+        # The default workspace holds the key, so it is needed before anything
+        # else; it is still a clone the user has not agreed to yet.
+        _confirm_heavy_work(args, home, None, needs_clone=True, needs_fetch=False)
         _say(f"cloning the Prove2Me workspace into {home}")
         prove2me.clone_workspace(home)
 

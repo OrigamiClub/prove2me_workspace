@@ -835,6 +835,34 @@ def _mission_api(rev: str) -> FakeApi:
     })
 
 
+def test_setup_asks_before_cloning_the_default_workspace(tmp_path: Path, monkeypatch, capsys) -> None:
+    missing = tmp_path / "no-workspace-yet"
+    monkeypatch.delenv("PROVE2ME_API_KEY", raising=False)
+    monkeypatch.delenv("PROVE2ME_WORKSPACE", raising=False)
+    monkeypatch.setattr(prove2me, "DEFAULT_WORKSPACE", missing)
+    monkeypatch.setattr(prove2me, "clone_workspace", lambda path: pytest.fail("cloned"))
+    monkeypatch.setattr(prove2me_cli.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(prove2me_cli.sys.stdin, "readline", lambda: "n\n")
+
+    assert main(["setup"]) == 1
+    output = capsys.readouterr().err
+    assert f"clone the Prove2Me workspace into {missing}" in output and "setup cancelled" in output
+    assert not missing.exists()
+
+
+def test_setup_never_clones_the_default_workspace_without_a_terminal_or_yes(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    missing = tmp_path / "no-workspace-yet"
+    monkeypatch.delenv("PROVE2ME_WORKSPACE", raising=False)
+    monkeypatch.setattr(prove2me, "DEFAULT_WORKSPACE", missing)
+    monkeypatch.setattr(prove2me, "clone_workspace", lambda path: pytest.fail("cloned"))
+    monkeypatch.setattr(prove2me_cli.sys.stdin, "isatty", lambda: False)
+
+    assert main(["setup"]) == 1
+    assert "pass --yes" in capsys.readouterr().err
+
+
 def test_setup_refuses_to_clone_or_download_without_a_yes(default_workspace: Path, monkeypatch, capsys) -> None:
     (default_workspace / "credentials.json").write_text(json.dumps({"api_key": KEY}))
     (default_workspace / "lakefile.lean").write_text(prove2me._LAKEFILE.format(rev="777aaa6" + "0" * 33))
