@@ -79,13 +79,16 @@ def cli_api(monkeypatch):
 
 def test_key_expiry_is_read_from_the_key_itself(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("PROVE2ME_API_KEY", raising=False)
-    (tmp_path / "credentials.json").write_text(json.dumps({"api_key": _key(1000), "username": "u"}))
+    stored = _key(1000)
+    (tmp_path / "credentials.json").write_text(json.dumps({"api_key": stored, "username": "u"}))
 
     credentials = prove2me.load_credentials(tmp_path)
 
+    assert credentials.api_key == stored
     assert credentials.expires_at == datetime.datetime.fromtimestamp(1000, datetime.timezone.utc)
     assert credentials.expired
-    assert KEY not in repr(credentials) and "api_key" not in repr(credentials)
+    assert stored not in repr(credentials) and stored not in str(credentials)
+    assert stored.split(".")[1] not in repr(credentials)
     with pytest.raises(Prove2MeError, match="expired"):
         Client(credentials)
 
@@ -158,6 +161,27 @@ def test_client_reauthenticates_once_on_401_and_only_talks_to_prove2me() -> None
     for path in ("https://evil.example/me", "//evil.example/me", "me"):
         with pytest.raises(Prove2MeError, match="relative"):
             client.get(path)
+
+
+@pytest.mark.parametrize("path", ["/agent/refresh", "/me"])
+def test_a_redirect_is_never_followed_with_the_key_or_token(path: str) -> None:
+    """A 307 keeps the method and body, so following it would post the key to another host."""
+    seen: list[httpx.Request] = []
+    api = FakeApi({("GET", "/me"): {"username": "u"}})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.host != "prove2.me":
+            return httpx.Response(200, json={"access_token": "stolen", "expires_at": 0})
+        if request.url.path == f"/api/v1{path}":
+            return httpx.Response(307, headers={"Location": f"https://evil.example{path}"})
+        return api(request)
+
+    client = Client(Credentials(KEY, "test"), transport=httpx.MockTransport(handler))
+
+    with pytest.raises(Prove2MeError, match="HTTP 307"):
+        client.get("/me")
+    assert {request.url.host for request in seen} == {"prove2.me"}
 
 
 def test_errors_carry_the_server_message_but_never_the_key() -> None:
