@@ -41,7 +41,8 @@ checkout gets a `credentials.json` symlink to the default workspace's key, so
 it still authenticates when `$PROVE2ME_WORKSPACE` points at it. An
 existing pin is never overwritten. Cloning and the multi-gigabyte Mathlib
 download are shown first and need a yes from the terminal or `--yes`, and the
-download is refused when less than about 16 GB is free. `--print-workspace`
+download is refused when less than about 16 GB is free. Each Lake step may run
+for `--step-timeout` seconds (default 7200). `--print-workspace`
 prints only the chosen path, for scripts:
 
 ```bash
@@ -85,6 +86,11 @@ prove2me verify <theorem-id> Solutions/Sol_<slug>.lean \
   --explanation-file explanation.md --dry-run
 prove2me explain <submission-id> --file explanation.md
 ```
+
+Every Lake run, here and in `setup` and `propose`, has a deadline
+(`--compile-timeout`, default 1800 seconds) and keeps only the last 64 KiB of
+output. Lake runs in its own process group, so a timeout stops the `lean`
+workers it started as well, and the command fails if any of them survive.
 
 Pass `--disprove` when the file proves the negation of the whole statement,
 `--no-wait` to return once queued, and `--json` for machine-readable output.

@@ -18,9 +18,12 @@ import datetime
 import json
 import os
 import re
+import signal
 import subprocess
+import sys
+import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -473,17 +476,115 @@ def compile_locally(path: Path, workspace: Path, target_name: str, timeout: floa
     output: list[str] = []
     for command in (["lake", "build", solution_module, target_module], ["lake", "env", "lean", str(check)]):
         try:
-            run = subprocess.run(command, cwd=workspace, capture_output=True, text=True, timeout=timeout)
-        except FileNotFoundError:
-            return False, "lake not found on PATH"
-        except subprocess.TimeoutExpired:
+            run = run_bounded(command, workspace, timeout)
+        except Prove2MeError as exc:
+            return False, str(exc)
+        if run.timed_out:
             return False, f"{' '.join(command)} timed out after {timeout:g}s"
-        output.append((run.stdout + run.stderr).strip())
+        output.append(run.output)
         if run.returncode != 0:
             if command[1] == "env":
                 output.append("the solution's type does not match the target's formal_statement")
             return False, "\n".join(filter(None, output))
     return True, "\n".join(filter(None, output))
+
+
+# --- Bounded subprocesses ----------------------------------------------------
+
+#: Output kept from one command: its tail, which is where Lake reports errors.
+OUTPUT_LIMIT = 64 * 1024
+_KILL_GRACE = 5.0
+
+
+@dataclass
+class BoundedRun:
+    returncode: int | None
+    output: str
+    timed_out: bool = False
+
+
+def run_bounded(
+    command: Sequence[str], cwd: Path, timeout: float, *, echo: bool = False, limit: int = OUTPUT_LIMIT
+) -> BoundedRun:
+    """Run `command` with a deadline, keeping only the last `limit` bytes of its output.
+
+    Lake starts `lean` workers that outlive it when only Lake is killed, so the
+    command runs in its own process group and a timeout ends the whole group,
+    then checks that nothing in it survived. With `echo`, output is also copied
+    to stderr as it arrives, for long downloads the user should see.
+    Raises :class:`Prove2MeError` if the command cannot start or the group
+    cannot be stopped.
+    """
+    try:
+        process = subprocess.Popen(
+            list(command), cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, start_new_session=os.name == "posix",
+        )
+    except FileNotFoundError:
+        raise Prove2MeError(f"{command[0]} not found on PATH") from None
+    tail = bytearray()
+    dropped = 0
+
+    def drain() -> None:
+        nonlocal dropped
+        assert process.stdout is not None
+        for chunk in iter(lambda: process.stdout.read1(65536), b""):
+            if echo:
+                sys.stderr.buffer.write(chunk)
+                sys.stderr.flush()
+            tail.extend(chunk)
+            if len(tail) > limit:
+                dropped += len(tail) - limit
+                del tail[: len(tail) - limit]
+
+    reader = threading.Thread(target=drain, daemon=True)
+    reader.start()
+    timed_out = False
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        _stop_group(process)
+    reader.join(timeout=_KILL_GRACE)
+    output = tail.decode("utf-8", errors="replace").strip()
+    if dropped:
+        output = f"[{dropped} earlier bytes of output omitted]\n{output}"
+    return BoundedRun(None if timed_out else process.returncode, output, timed_out)
+
+
+def _stop_group(process: subprocess.Popen) -> None:
+    """End `process` and every descendant in its group, and confirm they are gone."""
+    if os.name != "posix":
+        process.kill()
+        process.wait()
+        return
+    group = process.pid
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        if not _signal_group(group, sig):
+            break
+        deadline = time.monotonic() + _KILL_GRACE
+        while time.monotonic() < deadline and _signal_group(group, 0):
+            process.poll()
+            time.sleep(0.05)
+        if not _signal_group(group, 0):
+            break
+    process.wait()
+    if _signal_group(group, 0):
+        raise Prove2MeError(f"processes in group {group} survived SIGKILL; stop them before retrying")
+
+
+def _signal_group(group: int, sig: int) -> bool:
+    """Send `sig` to `group`; False when no live process is left in it.
+
+    macOS answers EPERM, not ESRCH, for a group whose members have all exited
+    but are not yet reaped. Every member was started by this process under its
+    own user, so EPERM can only mean that.
+    """
+    try:
+        os.killpg(group, sig)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
 
 
 # --- Submission --------------------------------------------------------------
@@ -772,13 +873,12 @@ def compile_proposal(items: list[dict], workspace: Path, timeout: float) -> tupl
     if not modules:
         return True, "no draft items to build"
     try:
-        run = subprocess.run(["lake", "build", *modules], cwd=workspace, capture_output=True, text=True,
-                             timeout=timeout)
-    except FileNotFoundError:
-        return False, "lake not found on PATH"
-    except subprocess.TimeoutExpired:
+        run = run_bounded(["lake", "build", *modules], workspace, timeout)
+    except Prove2MeError as exc:
+        return False, str(exc)
+    if run.timed_out:
         return False, f"lake build timed out after {timeout:g}s"
-    return run.returncode == 0, (run.stdout + run.stderr).strip()
+    return run.returncode == 0, run.output
 
 
 def upload_proposal(client: Client, spec: dict, proposal_id: str | None = None) -> dict:

@@ -7,7 +7,6 @@ import getpass
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -39,6 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     target.add_argument("--env", help="pin to this mathlib_rev (or 'default') instead")
     setup.add_argument("--no-fetch", action="store_true", help="do not download Mathlib after pinning")
     setup.add_argument("--yes", action="store_true", help="clone and download without asking")
+    setup.add_argument(
+        "--step-timeout", type=float, default=7200, help="seconds each Lake step may run (default 7200)"
+    )
     setup.add_argument(
         "--print-workspace",
         action="store_true",
@@ -180,9 +182,11 @@ def _setup(args: argparse.Namespace) -> int:
                 steps.append(["lake", "build", "Solutions.SmokeTest"])
             for step in steps:
                 _say(f"$ {' '.join(step)}")
-                if subprocess.run(step, cwd=workspace, stdout=sys.stderr, stderr=sys.stderr).returncode != 0:
+                run = prove2me.run_bounded(step, workspace, args.step_timeout, echo=True)
+                if run.returncode != 0:
+                    problem = f"timed out after {args.step_timeout:g}s" if run.timed_out else "failed"
                     raise Prove2MeError(
-                        f"`{' '.join(step)}` failed in {workspace}; delete that directory before retrying "
+                        f"`{' '.join(step)}` {problem} in {workspace}; delete that directory before retrying "
                         "if it was created by this setup"
                     )
 

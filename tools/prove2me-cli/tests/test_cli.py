@@ -3,7 +3,8 @@ from __future__ import annotations
 import base64
 import datetime
 import json
-import subprocess
+import os
+import sys
 from pathlib import Path
 
 import httpx
@@ -574,9 +575,9 @@ def test_check_proposal_warns_about_what_blocks_submission_later() -> None:
 def test_compile_proposal_writes_drafts_where_imports_resolve_and_never_clobbers(tmp_path: Path, monkeypatch) -> None:
     builds: list[list[str]] = []
     monkeypatch.setattr(
-        prove2me.subprocess,
-        "run",
-        lambda command, **kwargs: builds.append(command) or subprocess.CompletedProcess(command, 0, "", ""),
+        prove2me,
+        "run_bounded",
+        lambda command, cwd, timeout, **kwargs: builds.append(command) or prove2me.BoundedRun(0, ""),
     )
 
     ok, _ = prove2me.compile_proposal(PROPOSAL["items"], tmp_path, 60)
@@ -851,7 +852,7 @@ def test_setup_checks_free_space_before_downloading_mathlib(default_workspace: P
     (default_workspace / "credentials.json").write_text(json.dumps({"api_key": KEY}))
     _route_setup_client(monkeypatch, _mission_api(C5EA["mathlib_rev"]))
     monkeypatch.setattr(prove2me_cli.shutil, "disk_usage", lambda path: shutil_usage(free=1 * 1024**3))
-    monkeypatch.setattr(prove2me_cli.subprocess, "run", lambda *a, **k: pytest.fail("ran lake"))
+    monkeypatch.setattr(prove2me_cli.prove2me, "run_bounded", lambda *a, **k: pytest.fail("ran lake"))
 
     assert main(["setup", "--mission", "Weak_Goldbach_Conjecture", "--yes"]) == 1
     assert "only 1.0 GB is free" in capsys.readouterr().err
@@ -861,3 +862,33 @@ def shutil_usage(free: int):
     import shutil
 
     return shutil._ntuple_diskusage(total=100 * 1024**3, used=0, free=free)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process groups are POSIX-only")
+def test_a_timeout_stops_the_command_and_everything_it_started(tmp_path: Path) -> None:
+    """Killing only Lake leaves its lean workers running, so the whole group must go."""
+    pidfile = tmp_path / "child.pid"
+    script = f"sleep 60 & echo $! > {pidfile}; wait"
+
+    run = prove2me.run_bounded(["sh", "-c", script], tmp_path, 1)
+
+    assert run.timed_out and run.returncode is None
+    child = int(pidfile.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)
+
+
+def test_output_keeps_only_its_tail(tmp_path: Path) -> None:
+    run = prove2me.run_bounded(
+        [sys.executable, "-c", "print('x' * 5000); print('the error')"], tmp_path, 30, limit=100
+    )
+
+    assert run.returncode == 0 and not run.timed_out
+    assert run.output.endswith("the error")
+    assert "earlier bytes of output omitted" in run.output
+    assert len(run.output) < 200
+
+
+def test_a_missing_command_is_reported_not_raised_as_an_os_error(tmp_path: Path) -> None:
+    with pytest.raises(Prove2MeError, match="not found on PATH"):
+        prove2me.run_bounded(["definitely-not-a-command-p2m"], tmp_path, 5)
