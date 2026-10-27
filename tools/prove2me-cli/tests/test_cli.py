@@ -331,6 +331,59 @@ def test_fetch_refuses_an_unpinned_workspace(tmp_path: Path) -> None:
         prove2me.fetch_theorem(_client(api), "leaf", tmp_path)
 
 
+@pytest.mark.parametrize(
+    ("name", "ok"),
+    [
+        ("RybinAI2026.P01.one_sphere_l2_coefficients", True),
+        ("α.β'", True),
+        ("x₁.foo!", True),
+        ("_private_ok", True),
+        ("P01.leaf := trivial\n#eval IO.Process.exit 0\ntheorem t", False),
+        ("a b", False),
+        ("1abc", False),
+        ("a..b", False),
+        ("«weird name»", False),
+        ("a/b", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_only_plain_lean_names_reach_source_or_paths(name: object, ok: bool) -> None:
+    assert prove2me.is_lean_name(name) is ok
+
+
+def test_fetch_refuses_a_theorem_whose_name_is_not_a_lean_name(tmp_path: Path) -> None:
+    (tmp_path / "lake-manifest.json").write_text(json.dumps({"packages": [{"name": "mathlib", "rev": "c5ea"}]}))
+    hostile = {**TARGET, "theorem_name": "P01.leaf := trivial\n#eval 0\ntheorem x"}
+    api = FakeApi({("GET", "/theorems/leaf"): hostile})
+
+    with pytest.raises(Prove2MeError, match="not a plain Lean name"):
+        prove2me.fetch_theorem(_client(api), "leaf", tmp_path)
+    assert not (tmp_path / "Theorems").exists()
+
+
+def test_fetch_leaves_an_import_that_is_not_a_lean_name_unresolved(tmp_path: Path) -> None:
+    (tmp_path / "lake-manifest.json").write_text(json.dumps({"packages": [{"name": "mathlib", "rev": "c5ea"}]}))
+    target = {**TARGET, "preamble": "import Theorems.Thm_a/b"}
+    api = FakeApi({("GET", "/theorems/leaf"): target})
+
+    result = prove2me.fetch_theorem(_client(api), "leaf", tmp_path)
+
+    assert result.unresolved == ["Theorems.Thm_a/b"]
+    assert not any(request.url.path.endswith("/theorems") for request in api.requests)
+
+
+def test_the_type_check_refuses_a_target_name_that_is_not_a_lean_name(tmp_path: Path) -> None:
+    (tmp_path / "Solutions").mkdir()
+    solution = tmp_path / "Solutions" / "Sol.lean"
+    solution.write_text("theorem solution : True := trivial\n")
+
+    ok, message = prove2me.compile_locally(solution, tmp_path, "t := x\n#eval 0", 10)
+
+    assert not ok and "not a plain Lean name" in message
+    assert not (tmp_path / ".lake").exists()
+
+
 # --- local gates -------------------------------------------------------------
 
 

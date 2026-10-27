@@ -260,6 +260,23 @@ def mission_frontier(client: Client, mission: dict) -> dict:
 # --- Workspace mirroring -----------------------------------------------------
 
 
+# One dot-separated Lean name of plain identifier segments: letters (any
+# script), digits, `_`, `'`, `!`, `?`, and subscripts, not starting with a
+# digit. Guillemet-quoted segments are refused; the platform does not use them.
+_LEAN_NAME = re.compile(r"[^\W\d][\w'!?\u2080-\u209c]*(?:\.[^\W\d][\w'!?\u2080-\u209c]*)*")
+
+
+def is_lean_name(name: object) -> bool:
+    """Whether `name` is safe to splice into Lean source and module paths."""
+    return isinstance(name, str) and _LEAN_NAME.fullmatch(name) is not None
+
+
+def require_lean_name(name: object, what: str) -> str:
+    if not is_lean_name(name):
+        raise Prove2MeError(f"refusing {what} {name!r}: not a plain Lean name")
+    return name  # type: ignore[return-value]
+
+
 def theorem_slug(name: str) -> str:
     return name.replace(".", "_")
 
@@ -333,7 +350,8 @@ def fetch_theorem(
         path.write_text(text, encoding="utf-8")
         result.written.append(relative)
 
-    pending = [(theorem_slug(theorem["theorem_name"]), _theorem_source(theorem), "Theorems")]
+    target = require_lean_name(theorem.get("theorem_name"), "theorem name")
+    pending = [(theorem_slug(target), _theorem_source(theorem), "Theorems")]
     seen: set[str] = set()
     while pending:
         name, source, kind = pending.pop()
@@ -344,6 +362,10 @@ def fetch_theorem(
         write(f"{module.replace('.', '/')}.lean", source)
         for imported in _imports(source):
             if imported in seen or not imported.startswith(("Theorems.Thm_", "Definitions.Def_")):
+                continue
+            if not is_lean_name(imported):
+                result.unresolved.append(imported)
+                seen.add(imported)
                 continue
             dependency = _lookup_module(client, imported, env)
             if dependency is None:
@@ -376,7 +398,8 @@ def _lookup_module(client: Client, module: str, env: str | None) -> tuple[str, s
     candidates = list(exact.get("theorems", []))  # type: ignore[union-attr]
     candidates += by_segment.get("theorems", [])  # type: ignore[union-attr]
     for item in candidates:
-        if theorem_slug(item.get("theorem_name", "")) == name and item.get("status") != "Definition":
+        found = item.get("theorem_name", "")
+        if is_lean_name(found) and theorem_slug(found) == name and item.get("status") != "Definition":
             detail = client.get(f"/theorems/{item['theorem_id']}")
             return name, _theorem_source(detail), kind  # type: ignore[arg-type]
     return None
@@ -480,6 +503,10 @@ def compile_locally(
     if relative is None or relative.parts[0] != "Solutions" or relative.suffix != ".lean":
         return False, f"put the solution under {workspace / 'Solutions'} so its type can be checked against the target"
     solution_module = ".".join(relative.with_suffix("").parts)
+    if not is_lean_name(target_name):
+        return False, f"refusing target name {target_name!r}: not a plain Lean name"
+    if not is_lean_name(solution_module):
+        return False, f"rename {path.name}: {solution_module} is not a plain Lean module name"
     target_module = f"Theorems.Thm_{theorem_slug(target_name)}"
     if not (workspace / "Theorems" / f"Thm_{theorem_slug(target_name)}.lean").is_file():
         return False, f"{target_module} is not mirrored; run `prove2me fetch` first"

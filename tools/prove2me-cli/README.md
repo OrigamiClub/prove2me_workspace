@@ -17,6 +17,17 @@ uv run prove2me --help
 
 Run the tests with `uv run --extra dev pytest`.
 
+## Trust boundary
+
+`fetch` mirrors Lean that other people uploaded, and `verify`, `propose`, and
+`setup` build it with Lake on your machine. Lean runs code while it elaborates
+(`#eval`, `run_cmd`, macros, `initialize`), so building a mirrored file can do
+anything you can, including reading `credentials.json`. The CLI does not
+sandbox Lake. It only checks that every name it puts into source or a file
+path is a plain Lean name, so a hostile name cannot add code to the files the
+CLI writes itself. Read what `fetch` wrote before you build it, and build
+untrusted missions in a container or a separate account when that matters.
+
 ## Commands
 
 `prove2me` works on [Prove2Me](https://prove2.me) missions from a
