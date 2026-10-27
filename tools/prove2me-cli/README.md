@@ -92,7 +92,9 @@ Every Lake run, here and in `setup` and `propose`, has a deadline
 output. Lake runs in its own process group, so a timeout stops the `lean`
 workers it started as well, and the command fails if any of them survive.
 
-Pass `--disprove` when the file proves the negation of the whole statement,
+Pass `--disprove` when the file proves the negation of the whole statement;
+the type check is then `example : ¬ (type_of% @<target>) := @solution`, and the
+file may not import platform theorems, since disproofs cannot be sketches. Pass
 `--no-wait` to return once queued, and `--json` for machine-readable output.
 
 A sketch imports child lemmas that must exist first. `publish` validates a

@@ -359,7 +359,9 @@ def _verify(client: prove2me.Client, args: argparse.Namespace, workspace: Path) 
     report: dict = {"theorem_id": args.theorem_id, "theorem_name": theorem.get("theorem_name"),
                     "theorem_status": theorem.get("status"), "file": str(path)}
 
-    problems = prove2me.check_solution(path.read_text(encoding="utf-8"), theorem["theorem_name"])
+    problems = prove2me.check_solution(
+        path.read_text(encoding="utf-8"), theorem["theorem_name"], disprove=args.disprove
+    )
     workspace_rev = prove2me.workspace_mathlib_rev(workspace)
     if workspace_rev != theorem.get("mathlib_rev") and not args.allow_env_mismatch and not args.skip_compile:
         problems.append(
@@ -374,7 +376,9 @@ def _verify(client: prove2me.Client, args: argparse.Namespace, workspace: Path) 
         # Lake prints nothing until it finishes, and a cold `import Mathlib` can take many minutes.
         print(f"building {path.name} and checking it against {theorem['theorem_name']} with Lake; "
               "files that import all of Mathlib can take many minutes", file=sys.stderr, flush=True)
-        ok, output = prove2me.compile_locally(path, workspace, theorem["theorem_name"], args.compile_timeout)
+        ok, output = prove2me.compile_locally(
+            path, workspace, theorem["theorem_name"], args.compile_timeout, disprove=args.disprove
+        )
         report["compile_output"] = output[-4000:]
         if not ok:
             problems.append("local build or type check failed")

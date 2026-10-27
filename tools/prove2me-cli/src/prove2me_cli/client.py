@@ -413,19 +413,23 @@ _OPENER = re.compile(r"^\s*(?:noncomputable\s+)?(namespace|section|mutual)\b\s*(
 _END = re.compile(r"^\s*end\b")
 
 
-def check_solution(source: str, target_name: str) -> list[str]:
+def check_solution(source: str, target_name: str, *, disprove: bool = False) -> list[str]:
     """Problems Prove2Me would reject before type-checking, as readable strings.
 
     These are the platform's gating rules: a top-level `theorem solution`, no
-    `sorry` in the submitted file, and no import of the target's own module.
+    `sorry` in the submitted file, and no import of the target's own module. A
+    disproof may not import platform theorems at all: sketches only prove.
     """
     code = _strip_comments(source)
     problems: list[str] = []
     if _has_sorry(code):
         problems.append("contains sorry/admit; the submitted file must be sorry-free")
     own = f"Theorems.Thm_{theorem_slug(target_name)}"
-    if own in _imports(source):
+    imports = _imports(source)
+    if own in imports:
         problems.append(f"imports its own target {own}; the server stores it as sorry and rejects this")
+    elif disprove and any(module.startswith("Theorems.") for module in imports):
+        problems.append("a disproof cannot import platform theorems; sketches are only supported for proofs")
 
     scopes: list[str] = []
     found_top_level = found_nested = False
@@ -447,13 +451,17 @@ def check_solution(source: str, target_name: str) -> list[str]:
     return problems
 
 
-def compile_locally(path: Path, workspace: Path, target_name: str, timeout: float) -> tuple[bool, str]:
+def compile_locally(
+    path: Path, workspace: Path, target_name: str, timeout: float, *, disprove: bool = False
+) -> tuple[bool, str]:
     """Build the solution and check its type against the mirrored target.
 
     Compiling alone would accept a proof of the wrong statement, which the
     server reports as WA. So the solution and the target's module are built,
     then `example : type_of% @target := @solution` is elaborated against both,
-    the same comparison the verifier makes. Returns (ok, combined output).
+    the same comparison the verifier makes. A disproof proves the negation of
+    the whole quantified statement, so its check is `¬ (type_of% @target)`.
+    Returns (ok, combined output).
     """
     try:
         relative = path.resolve().relative_to(workspace.resolve())
@@ -470,7 +478,7 @@ def compile_locally(path: Path, workspace: Path, target_name: str, timeout: floa
     check.parent.mkdir(parents=True, exist_ok=True)
     check.write_text(
         f"import {solution_module}\nimport {target_module}\n\n"
-        f"example : type_of% @{target_name} := @solution\n",
+        f"example : {'¬ ' if disprove else ''}(type_of% @{target_name}) := @solution\n",
         encoding="utf-8",
     )
     output: list[str] = []
@@ -484,7 +492,10 @@ def compile_locally(path: Path, workspace: Path, target_name: str, timeout: floa
         output.append(run.output)
         if run.returncode != 0:
             if command[1] == "env":
-                output.append("the solution's type does not match the target's formal_statement")
+                output.append(
+                    "the solution's type is not the negation of the target's formal_statement" if disprove
+                    else "the solution's type does not match the target's formal_statement"
+                )
             return False, "\n".join(filter(None, output))
     return True, "\n".join(filter(None, output))
 

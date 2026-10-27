@@ -322,6 +322,35 @@ def test_check_solution_enforces_the_platform_gates(source: str, expected: list[
         assert fragment in problem
 
 
+def test_a_disproof_may_not_import_platform_theorems() -> None:
+    source = "import Theorems.Thm_P01_other\ntheorem solution : ¬ True := sorry_free"
+
+    assert prove2me.check_solution(source, "P01.leaf") == []
+    problems = prove2me.check_solution(source, "P01.leaf", disprove=True)
+    assert len(problems) == 1 and "cannot import platform theorems" in problems[0]
+
+
+@pytest.mark.parametrize(("disprove", "expected"), [(False, "example : (type_of% @P01.leaf)"),
+                                                    (True, "example : ¬ (type_of% @P01.leaf)")])
+def test_the_type_check_negates_the_target_for_a_disproof(
+    tmp_path: Path, monkeypatch, disprove: bool, expected: str
+) -> None:
+    (tmp_path / "Solutions").mkdir()
+    (tmp_path / "Theorems").mkdir()
+    (tmp_path / "Theorems" / "Thm_P01_leaf.lean").write_text("theorem P01.leaf : True := by sorry\n")
+    solution = tmp_path / "Solutions" / "Sol_P01_leaf.lean"
+    solution.write_text("theorem solution : True := trivial\n")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(prove2me, "run_bounded",
+                        lambda command, cwd, timeout, **kwargs: commands.append(command) or prove2me.BoundedRun(0, ""))
+
+    ok, _ = prove2me.compile_locally(solution, tmp_path, "P01.leaf", 10, disprove=disprove)
+
+    assert ok and commands[-1][:3] == ["lake", "env", "lean"]
+    check = Path(commands[-1][3]).read_text(encoding="utf-8")
+    assert f"{expected} := @solution" in check
+
+
 def test_compile_requires_the_solution_inside_the_workspace(tmp_path: Path) -> None:
     ok, message = prove2me.compile_locally(tmp_path / "elsewhere.lean", tmp_path / "ws", "P01.leaf", 10)
 
