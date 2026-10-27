@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     fetch = command("fetch", "mirror a theorem and its platform imports into the workspace")
     fetch.add_argument("theorem_id")
+    fetch.add_argument(
+        "--allow-env-mismatch",
+        action="store_true",
+        help="mirror even though the workspace pins a different Mathlib than the target",
+    )
 
     get = command("get", "read-only GET of any API path, for scouting history, discussion, and submissions")
     get.add_argument("path", help="path under /api/v1, e.g. /theorems/<id>/submissions")
@@ -303,7 +308,7 @@ def _mission(client: prove2me.Client, args: argparse.Namespace, workspace: Path)
 
 
 def _fetch(client: prove2me.Client, args: argparse.Namespace, workspace: Path) -> int:
-    result = prove2me.fetch_theorem(client, args.theorem_id, workspace)
+    result = prove2me.fetch_theorem(client, args.theorem_id, workspace, allow_env_mismatch=args.allow_env_mismatch)
     theorem = result.theorem
     if args.json:
         _emit({
@@ -370,7 +375,9 @@ def _verify(client: prove2me.Client, args: argparse.Namespace, workspace: Path) 
         )
     if not problems and not args.skip_compile:
         # Re-mirror so the type check compares against the statement as published now.
-        mirrored = prove2me.fetch_theorem(client, args.theorem_id, workspace)
+        mirrored = prove2me.fetch_theorem(
+            client, args.theorem_id, workspace, allow_env_mismatch=args.allow_env_mismatch
+        )
         problems.extend(f"could not mirror platform module {module}" for module in mirrored.unresolved)
     if not problems and not args.skip_compile:
         # Lake prints nothing until it finishes, and a cold `import Mathlib` can take many minutes.

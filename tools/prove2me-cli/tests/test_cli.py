@@ -287,14 +287,24 @@ def test_fetch_mirrors_the_target_and_its_platform_imports(tmp_path: Path) -> No
     assert prove2me.fetch_theorem(_client(api), "leaf", tmp_path).written == []
 
 
-def test_fetch_reports_an_environment_mismatch(tmp_path: Path) -> None:
+def test_fetch_writes_nothing_into_a_workspace_on_another_mathlib(tmp_path: Path) -> None:
     (tmp_path / "lakefile.lean").write_text('require mathlib from git\n  "https://x/mathlib4.git" @\n  "777aaa6"\n')
     api = FakeApi({("GET", "/theorems/leaf"): {**TARGET, "preamble": ""}})
 
-    result = prove2me.fetch_theorem(_client(api), "leaf", tmp_path)
+    with pytest.raises(Prove2MeError, match="pins Mathlib 777aaa6"):
+        prove2me.fetch_theorem(_client(api), "leaf", tmp_path)
+    assert not (tmp_path / "Theorems").exists()
 
-    assert result.workspace_rev == "777aaa6"
-    assert not result.environment_matches
+    result = prove2me.fetch_theorem(_client(api), "leaf", tmp_path, allow_env_mismatch=True)
+    assert result.workspace_rev == "777aaa6" and not result.environment_matches
+    assert result.written == ["Theorems/Thm_P01_leaf.lean"]
+
+
+def test_fetch_refuses_an_unpinned_workspace(tmp_path: Path) -> None:
+    api = FakeApi({("GET", "/theorems/leaf"): {**TARGET, "preamble": ""}})
+
+    with pytest.raises(Prove2MeError, match="pins Mathlib nothing"):
+        prove2me.fetch_theorem(_client(api), "leaf", tmp_path)
 
 
 # --- local gates -------------------------------------------------------------

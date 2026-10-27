@@ -60,8 +60,10 @@ prove2me mission https://prove2.me/missions/Positive_definite_matrix_integral_in
 Mirror a target into the workspace exactly where the verifier resolves it:
 `Theorems/Thm_<slug>.lean` from its preamble and formal statement, plus every
 `Theorems.Thm_*` and `Definitions.Def_*` module it imports, transitively. It
-warns when the workspace pins a different Mathlib than the target's
-`mathlib_rev`; re-pin before compiling. Scouting reads (milestone history,
+writes nothing and exits nonzero when the workspace pins a different Mathlib
+than the target's `mathlib_rev`, or none, since one checkout holding two
+environments' modules builds them against the wrong Mathlib; use the checkout
+`setup --env` prepares, or pass `--allow-env-mismatch`. Scouting reads (milestone history,
 discussion, prior submissions, decompositions) go through a read-only `get`:
 
 ```bash

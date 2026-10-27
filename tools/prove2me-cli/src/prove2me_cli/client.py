@@ -300,18 +300,28 @@ class FetchResult:
         return self.workspace_rev is not None and self.workspace_rev == self.theorem.get("mathlib_rev")
 
 
-def fetch_theorem(client: Client, theorem_id: str, workspace: Path) -> FetchResult:
+def fetch_theorem(
+    client: Client, theorem_id: str, workspace: Path, *, allow_env_mismatch: bool = False
+) -> FetchResult:
     """Mirror a theorem and the platform modules it imports into the workspace.
 
     Files land where the server resolves them (`Theorems/Thm_<slug>.lean`,
     `Definitions/Def_<name>.lean`), verbatim, so a local build sees what the
-    verifier sees.
+    verifier sees. Nothing is written into a workspace pinned to another
+    Mathlib, or to none, unless `allow_env_mismatch`: one checkout holding
+    modules from two environments builds them against the wrong Mathlib.
     """
     theorem = client.get(f"/theorems/{theorem_id}")
     if not isinstance(theorem, dict) or theorem.get("status") == "Definition":
         raise Prove2MeError(f"{theorem_id} is not a provable theorem")
     env = theorem.get("mathlib_rev")
     result = FetchResult(theorem=theorem, workspace_rev=workspace_mathlib_rev(workspace))
+    if not result.environment_matches and not allow_env_mismatch:
+        raise Prove2MeError(
+            f"{workspace} pins Mathlib {result.workspace_rev or 'nothing'}, but {theorem.get('theorem_name')} "
+            f"is verified in {env}; run `prove2me setup --env {str(env)[:7]}` for a matching checkout "
+            "and fetch there, or pass --allow-env-mismatch"
+        )
 
     def write(relative: str, text: str) -> None:
         path = workspace / relative
