@@ -541,6 +541,27 @@ def test_publish_dry_run_and_invalid_specs_never_post(cli_api, tmp_path: Path, c
     assert not any(request.method == "POST" and "submit" in request.url.path for request in api.requests)
 
 
+def test_json_output_is_one_json_document_on_every_path(cli_api, tmp_path: Path, capsys) -> None:
+    """--json is accepted by every subcommand, so every path must honour it."""
+    cli_api["api"] = FakeApi({("PATCH", "/submissions/sub-1"): {"id": "sub-1"}})
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(CHILD))
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({**CHILD, "formal_statement": "theorem P01.child : True := trivial"}))
+    why = tmp_path / "why.md"
+    why.write_text("Because.")
+    runs = [
+        (["publish", "problem", str(good), "--env", "c5ea", "--dry-run"], 0),
+        (["publish", "problem", str(bad), "--env", "c5ea"], 1),
+        (["explain", "sub-1", "--file", str(why)], 0),
+        (["explain", "sub-1", "--clear"], 0),
+    ]
+    for argv, expected in runs:
+        assert main([*argv, "--workspace", str(tmp_path), "--json"]) == expected, argv
+        out = capsys.readouterr().out
+        assert isinstance(json.loads(out), dict), (argv, out)
+
+
 # --- mission proposals -------------------------------------------------------
 
 

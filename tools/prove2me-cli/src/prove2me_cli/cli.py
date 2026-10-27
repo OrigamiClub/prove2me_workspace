@@ -440,10 +440,13 @@ def _publish(client: prove2me.Client, args: argparse.Namespace, workspace: Path)
     items = prove2me.publish_items(args.kind, spec)
     problems = [problem for item in items for problem in prove2me.check_publish(args.kind, item)]
     if problems or args.dry_run:
-        for problem in problems:
-            print(f"error: {problem}")
-        if not problems:
-            print(f"OK: {len(items)} {args.kind}(s) pass the local checks; dry run, nothing published")
+        if args.json:
+            _emit({"items": len(items), "problems": problems, "published": False})
+        else:
+            for problem in problems:
+                print(f"error: {problem}")
+            if not problems:
+                print(f"OK: {len(items)} {args.kind}(s) pass the local checks; dry run, nothing published")
         return 1 if problems else 0
 
     env = None if args.env == "default" else args.env
@@ -535,5 +538,8 @@ def _propose(client: prove2me.Client, args: argparse.Namespace, workspace: Path)
 def _explain(client: prove2me.Client, args: argparse.Namespace, workspace: Path) -> int:
     text = None if args.clear else args.file.read_text(encoding="utf-8")
     prove2me.set_explanation(client, args.submission_id, text)
-    print(f"OK: explanation {'cleared' if text is None else 'updated'} on {args.submission_id}")
+    if args.json:
+        _emit({"submission_id": args.submission_id, "explanation": "cleared" if text is None else "updated"})
+    else:
+        print(f"OK: explanation {'cleared' if text is None else 'updated'} on {args.submission_id}")
     return 0
