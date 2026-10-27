@@ -40,8 +40,8 @@ proof to a Prove2Me mission.
 
 Options:
   --project DIR    Lean+Mathlib project to work in (default: $PROJECT).
-                   Created with 'lake init' if it does not exist; an existing
-                   project must already depend on Mathlib.
+                   Created with 'autoform project new' if it does not exist;
+                   an existing project must already depend on Mathlib.
   --roadmap-only   Write the blueprint article only; do not touch Lean.
   --model MODEL    Claude model to use (default: Claude Code's default).
 
@@ -114,14 +114,27 @@ if [[ -z "$PROVE2ME" ]]; then
 fi
 
 prove2me() { uv run --quiet --project "$HERE" prove2me "$@"; }
+# The session gets these exact command prefixes, not `uv run` in general.
 PROVE2ME_CMD="uv run --project \"$HERE\" prove2me"
+AUTOFORM_CMD="uv run --project \"$ROOT\" autoform"
 
-# Tools the headless session may use without prompting.
+# Tools the headless session may use without prompting. Each Bash rule is a
+# command prefix, so it must not be one that runs an arbitrary program: no
+# bare `uv run`, `lake env`, `find`, or `git` (whose -c options run commands).
+# Reading files goes through Read, Grep, and Glob, which the deny rules below
+# keep away from the API key. Building Lean the session wrote still runs that
+# Lean's code; only a sandbox around the whole run closes that.
 ALLOWED_TOOLS=(
   "Read" "Edit" "Write" "Glob" "Grep" "Skill"
-  "Bash(lake:*)" "Bash(uv run:*)" "Bash(git:*)" "Bash(ls:*)" "Bash(cat:*)"
-  "Bash(grep:*)" "Bash(find:*)" "Bash(mkdir:*)"
+  "Bash(lake build)" "Bash(lake build:*)" "Bash(lake env lean:*)"
+  "Bash($PROVE2ME_CMD:*)"
+  "Bash(git status:*)" "Bash(git diff:*)" "Bash(git log:*)" "Bash(git add:*)" "Bash(git commit -m:*)"
+  "Bash(ls:*)" "Bash(mkdir:*)"
   "mcp__plugin_autoform_autoform-lsp" "mcp__plugin_autoform_autoform-repl"
+)
+[[ -z "$ROOT" ]] || ALLOWED_TOOLS+=("Bash($AUTOFORM_CMD:*)")
+DENIED_TOOLS=(
+  "Read(**/credentials.json)" "Edit(**/credentials.json)" "Write(**/credentials.json)"
 )
 
 # `claude -p` exits as soon as Claude ends its reply, killing anything still
@@ -143,6 +156,7 @@ run_claude() {  # run_claude <prompt> [extra allowed tools...]
   args+=(
     --add-dir "$HERE" ${EXTRA_DIRS[@]+"${EXTRA_DIRS[@]}"}
     --permission-mode acceptEdits
+    --disallowedTools "${DENIED_TOOLS[@]}"
     --allowedTools "${ALLOWED_TOOLS[@]}" "$@"
   )
   [[ -n "$MODEL" ]] && args+=(--model "$MODEL")
@@ -210,9 +224,11 @@ autoform() { uv run --quiet --project "$ROOT" autoform "$@"; }
 
 # --- Workspace ---------------------------------------------------------------
 if [[ ! -d "$PROJECT" ]]; then
+  # `project new` pins a toolchain and Mathlib that AutoformBot has tested and
+  # writes the blueprint and site with it, so `autoform init` is not needed.
   echo "==> Creating Lean + Mathlib workspace at $PROJECT (first run only; this downloads Mathlib)"
-  mkdir -p "$PROJECT"
-  (cd "$PROJECT" && lake init "$PACKAGE" math)
+  mkdir -p "$(dirname "$PROJECT")"
+  autoform project new "$PROJECT" --package "$PACKAGE"
 fi
 PROJECT="$(cd "$PROJECT" && pwd)"
 
@@ -253,7 +269,6 @@ LEAN_DIR="$PACKAGE"
 LEAN_FILE="${LEAN_DIR:-$PACKAGE}/$MODULE.lean"
 
 # --- Prompt ------------------------------------------------------------------
-AUTOFORM_CMD="uv run --project \"$ROOT\" autoform"
 read -r -d '' PROMPT <<EOF || true
 You are running AutoformBot non-interactively on a single statement, not a
 paper. Nobody is available to answer questions: the scope below is already
